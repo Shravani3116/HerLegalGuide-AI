@@ -1,0 +1,222 @@
+{
+  "name": "Womens_Laws_AI_Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        128,
+        -672
+      ],
+      "id": "8805c491-a586-4714-9a4e-1850b13115c4",
+      "name": "Telegram Trigger",
+      "webhookId": "54714c25-8deb-4e2a-b822-b99fc03cfe3c",
+      "credentials": {
+        "telegramApi": {
+          "id": "d8vLEnIcup6PNXJA",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "160U-y03TE8GnQXe1QTC9EAs_KTLhX0JS",
+          "mode": "list",
+          "cachedResultName": "womens_laws_india_dataset_120.csv",
+          "cachedResultUrl": "https://drive.google.com/file/d/160U-y03TE8GnQXe1QTC9EAs_KTLhX0JS/view?usp=drivesdk"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        208,
+        -208
+      ],
+      "id": "92c98721-3b0c-4588-aa48-c9f802c2437b",
+      "name": "Download file",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "K4wKAtnA7TXACYfm",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.2,
+      "position": [
+        432,
+        -208
+      ],
+      "id": "0083d367-416e-4a20-b366-8bb3a6fbf422",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\n\n// Get the original message from Telegram\nconst question = String(\n  $('Telegram Trigger').first().json.message?.text || ''\n).trim();\n\nconst normalizedQuestion = question.toLowerCase();\n\n// 1. Handle greetings before searching the dataset\nconst greetingPattern =\n  /^(hi+|hello+|hey+|hii+|hiii+|good morning|good afternoon|good evening|good night|how are you)[!.,?\\s]*$/i;\n\nif (greetingPattern.test(question)) {\n  return [\n    {\n      json: {\n        reply:\n          \"Hello! 👋 Welcome to HerLegalGuide AI. I can help you understand women's legal rights in India. You can ask me about dowry, domestic violence, workplace harassment, marriage rights, or other legal issues.\"\n      }\n    }\n  ];\n}\n\n// 2. Handle an empty message\nif (!question) {\n  return [\n    {\n      json: {\n        reply: \"Please enter a question about women's legal rights in India.\"\n      }\n    }\n  ];\n}\n\n// 3. Read the dataset rows from Extract from File\nconst dataset = items\n  .map(item => item.json)\n  .filter(row => row && typeof row === 'object');\n\n// 4. Prepare text for searching\nfunction normalize(value) {\n  return String(value ?? '')\n    .toLowerCase()\n    .replace(/[^a-z0-9\\s]/g, ' ')\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\n// Common legal terms and related words\nconst synonyms = {\n  dowry: [\n    'dowry',\n    'dowry demand',\n    'dowry demands',\n    'dowry harassment',\n    'dowry prohibition act',\n    'dowry related',\n    'bride price'\n  ],\n  'domestic violence': [\n    'domestic violence',\n    'violence at home',\n    'abuse by husband',\n    'husband abuse',\n    'marital abuse',\n    'protection of women from domestic violence act'\n  ],\n  'workplace harassment': [\n    'workplace harassment',\n    'sexual harassment at work',\n    'harassment at workplace',\n    'posh act',\n    'sexual harassment'\n  ],\n  'equal rights': [\n    'equal rights',\n    'gender equality',\n    'equality',\n    'discrimination against women'\n  ],\n  'child marriage': [\n    'child marriage',\n    'underage marriage',\n    'minor marriage'\n  ],\n  'maternity benefits': [\n    'maternity benefits',\n    'maternity leave',\n    'pregnancy benefits'\n  ]\n};\n\n// 5. Expand the question with relevant search terms\nlet searchText = normalize(question);\n\nfor (const [topic, terms] of Object.entries(synonyms)) {\n  if (terms.some(term => searchText.includes(normalize(term)))) {\n    searchText += ' ' + normalize(topic) + ' ' +\n      terms.map(normalize).join(' ');\n  }\n}\n\nconst questionWords = [\n  ...new Set(\n    searchText\n      .split(' ')\n      .filter(word => word.length > 2)\n  )\n];\n\n// 6. Score each dataset row against the question\nconst scoredRows = dataset.map(row => {\n  const category = normalize(row.category);\n  const lawName = normalize(row.law_name);\n  const rowQuestion = normalize(row.question);\n  const answer = normalize(row.answer);\n\n  const searchableText =\n    `${category} ${lawName} ${rowQuestion} ${answer}`;\n\n  let score = 0;\n\n  for (const word of questionWords) {\n    if (lawName.includes(word)) score += 5;\n    if (rowQuestion.includes(word)) score += 4;\n    if (category.includes(word)) score += 3;\n    if (answer.includes(word)) score += 1;\n  }\n\n  // Give extra weight to direct topic matches\n  if (\n    searchText.includes('dowry') &&\n    `${lawName} ${rowQuestion} ${category}`.includes('dowry')\n  ) {\n    score += 12;\n  }\n\n  if (\n    searchText.includes('domestic violence') &&\n    `${lawName} ${rowQuestion} ${category}`.includes('domestic violence')\n  ) {\n    score += 12;\n  }\n\n  if (\n    searchText.includes('workplace harassment') &&\n    `${lawName} ${rowQuestion} ${category}`.includes('harassment')\n  ) {\n    score += 12;\n  }\n\n  return { row, score, searchableText };\n});\n\n// 7. Select the best matching rows\nscoredRows.sort((a, b) => b.score - a.score);\n\nconst matches = scoredRows\n  .filter(result => result.score >= 5)\n  .slice(0, 3);\n\n// 8. Prepare information for the AI Agent\nif (matches.length > 0) {\n  const reply = matches.map((result, index) => {\n    const row = result.row;\n\n    return [\n      `Dataset result ${index + 1}:`,\n      `Category: ${row.category || 'Not specified'}`,\n      `Question: ${row.question || 'Not specified'}`,\n      `Law: ${row.law_name || 'Not specified'}`,\n      `Answer: ${row.answer || 'Not specified'}`,\n      `Official source: ${row.source_url || 'Not provided'}`,\n      `Disclaimer: ${row.disclaimer || 'General legal information only.'}`\n    ].join('\\n');\n  }).join('\\n\\n');\n\n  return [\n    {\n      json: {\n        reply,\n        originalQuestion: question,\n        matchFound: true\n      }\n    }\n  ];\n}\n\n// 9. No relevant dataset match\nreturn [\n  {\n    json: {\n      reply:\n        \"I could not find a reliable matching answer in my dataset. Please try asking about a specific law or legal issue, or check an official government source or consult a qualified legal-aid lawyer.\",\n      originalQuestion: question,\n      matchFound: false\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        -208
+      ],
+      "id": "e02cc719-fc38-4eb0-bcc8-20cf21b34e98",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "={{ $('AI Agent').first().json.output }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        -720
+      ],
+      "id": "8a999bf9-1411-4574-8d77-300f627d86fa",
+      "name": "Send a text message",
+      "webhookId": "7d09413a-2314-4bb4-ac66-34bd08043e57",
+      "credentials": {
+        "telegramApi": {
+          "id": "d8vLEnIcup6PNXJA",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ 'User question: ' + $('Telegram Trigger').first().json.message.text + '\\n\\nRelevant dataset information: ' + ($json.reply || 'No matching dataset information found.') }}",
+        "options": {
+          "systemMessage": "\nYou are HerLegalGuide AI, a Women's Legal Rights Assistant for India.\n\nIMPORTANT RULES:\n1. Use only the relevant information provided from the Women’s Laws dataset in the user message.\n2. Do not invent legal sections, punishments, procedures, helpline details, or court orders.\n3. Do not add laws or claims that are not present in the dataset.\n4. If the dataset provides only limited information, clearly explain that limitation.\n5.5. The user message contains a field called \"Relevant information found in the Women’s Laws dataset.\" If it contains a matching law record, answer using that information. If it explicitly says that no relevant answer was found, use the fallback message. Never send a separate message; produce only one final answer.\n6. Explain the information in simple English.\n7. Keep answers clear and concise.\n8. Treat all responses as general legal information, not personalized legal advice.\n9. Preserve official source links supplied by the dataset.\n10. Never claim that a person will definitely be arrested, punished, or receive a court order.\n"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        384,
+        -672
+      ],
+      "id": "3c8dcf83-47f0-4fbe-9aa4-1eef2fc00ae7",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-20b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        224,
+        -448
+      ],
+      "id": "b0878721-34ed-40ee-89dc-bc2ef2c7d05e",
+      "name": "Groq Chat Model",
+      "credentials": {
+        "groqApi": {
+          "id": "1oSz9PSARVyB3AN3",
+          "name": "Groq account 2"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Download file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download file": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "28079a0d-8e7a-4d4c-ae77-7b1196997030",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6e397e84f579ca106314f3c35580fa7ccc0b461fa158d40673981ad39f377ef6"
+  },
+  "nodeGroups": [],
+  "id": "t7JQVKCHSYUPSbQo",
+  "tags": []
+}
